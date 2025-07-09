@@ -1,0 +1,20 @@
+{
+  "name": "com.ktgame.iap.unity",
+  "version": "1.0.0",
+  "displayName": "com.ktgame.iap.unity",
+  "description": "Unity In App Purchasing.",
+  "author": {
+    "name": "ktgame",
+    "email": "khanhquang0912qh@gmail.com",
+    "url": "https://github.com/KhanhTQ-hub"
+  },
+  "dependencies": {
+    "com.ktgame.core": "1.0.9",
+    "com.ktgame.iap.core": "1.0.1",
+    "com.unity.purchasing": "4.11.0",
+    "com.ktgame.unitask": "1.0.3"
+  },
+  "publishConfig": {
+    "registry": "http://3.25.208.95:4873"
+  }
+}
