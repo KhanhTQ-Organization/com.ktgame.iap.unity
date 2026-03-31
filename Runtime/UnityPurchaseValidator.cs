@@ -10,7 +10,11 @@ namespace com.ktgame.iap.unity
 
 		public UnityPurchaseValidator(byte[] googlePublicKey, byte[] appleRootCert)
 		{
-			_validator = new CrossPlatformValidator(googlePublicKey, appleRootCert, Application.identifier);
+#if UNITY_EDITOR
+			_validator = null;
+#else
+			_validator = new CrossPlatformValidator(googlePublicKey,appleRootCert,Application.identifier);
+#endif
 		}
 
 		public PurchaseState Validate(string productId, string productType, string receipt)
@@ -21,16 +25,21 @@ namespace com.ktgame.iap.unity
 				return PurchaseState.Canceled;
 			}
 
-			try
-			{
-				_validator.Validate(receipt);
-				return PurchaseState.Purchased;
-			}
-			catch (IAPSecurityException ex)
-			{
-				Debug.Log($"[{nameof(UnityPurchase)}] Receipt is NOT valid.");
-				return PurchaseState.Canceled;
-			}
+#if UNITY_EDITOR
+			Debug.Log($"[{nameof(UnityPurchase)}] Skip validation in Editor.");
+			return PurchaseState.Purchased;
+#else
+    try
+    {
+        _validator.Validate(receipt);
+        return PurchaseState.Purchased;
+    }
+    catch (IAPSecurityException)
+    {
+        Debug.Log($"[{nameof(UnityPurchase)}] Receipt is NOT valid.");
+        return PurchaseState.Canceled;
+    }
+#endif
 		}
 	}
 }
