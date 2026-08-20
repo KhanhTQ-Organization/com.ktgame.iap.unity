@@ -11,20 +11,26 @@ namespace com.ktgame.iap.unity.editor
         [InitializeOnLoadMethod]
         private static void InitializeOnLoad()
         {
-            Events.registeringPackages += RegisteringPackagesEventHandler;
-            Events.registeredPackages += RegisteredPackagesEventHandler;
+            //Events.registeringPackages += RegisteringPackagesEventHandler;
+            //Events.registeredPackages += RegisteredPackagesEventHandler;
         }
 
         private static void RegisteringPackagesEventHandler(PackageRegistrationEventArgs args)
         {
             var removedPackage = args.removed.FirstOrDefault(package => package.name.Equals(PackageName));
-            if (removedPackage != null) { }
+            if (removedPackage != null)
+            {
+                RemoveScriptingDefineSymbol("UNITY_PURCHASE");
+            }
         }
 
         private static void RegisteredPackagesEventHandler(PackageRegistrationEventArgs args)
         {
             var addedPackage = args.added.FirstOrDefault(package => package.name.Equals(PackageName));
-            if (addedPackage != null) { }
+            if (addedPackage != null)
+            {
+                AddScriptingDefineSymbol("UNITY_PURCHASE");
+            }
         }
 
         private static void AddScriptingDefineSymbol(string define)

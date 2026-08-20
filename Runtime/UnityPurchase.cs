@@ -42,15 +42,8 @@ namespace com.ktgame.iap.unity
             _serverValidator = serverValidator;
         }
 
-#if UNITY_2020_3_OR_NEWER
-        public async void InitializePurchasing(IEnumerable<ProductData> productData)
-        {
-            // var options = new InitializationOptions().SetEnvironmentName("production");
-            // await UnityServices.InitializeAsync(options);
-#else
         public void InitializePurchasing(IEnumerable<ProductData> productData)
         {
-#endif
             var builder = ConfigurationBuilder.Instance(StandardPurchasingModule.Instance());
 
             foreach (var product in productData)
