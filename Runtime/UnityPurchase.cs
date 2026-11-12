@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using com.ktgame.iap.core;
 using UnityEngine;
@@ -19,6 +19,7 @@ namespace com.ktgame.iap.unity
         public event Action<PurchaseComplete> PurchaseCompleted;
         public event Action<PurchaseProcess> PurchaseProcessing;
         public event Action<PurchaseComplete> ServerPurchaseValid;
+        public event Action<PurchaseRestore> RestoreCompleted;
 
         public bool IsInitialized => _storeController != null && _storeExtensionProvider != null;
         public IEnumerable<IProduct> Products => _products;
@@ -30,6 +31,7 @@ namespace com.ktgame.iap.unity
         private readonly IPurchaseValidator _localValidator;
         private readonly IPurchaseValidator _serverValidator;
         private readonly List<UnityProduct> _products;
+        private bool _initializing;
 
         public UnityPurchase(IPurchaseValidator localValidator)
         {
@@ -44,6 +46,13 @@ namespace com.ktgame.iap.unity
 
         public void InitializePurchasing(IEnumerable<ProductData> productData)
         {
+            if (IsInitialized || _initializing)
+            {
+                Debug.Log($"[{nameof(UnityPurchase)}] InitializePurchasing ignored: already {(IsInitialized ? "initialized" : "initializing")}.");
+                return;
+            }
+
+            _initializing = true;
             var builder = ConfigurationBuilder.Instance(StandardPurchasingModule.Instance());
 
             foreach (var product in productData)
@@ -56,9 +65,11 @@ namespace com.ktgame.iap.unity
 
         public void OnInitialized(IStoreController controller, IExtensionProvider extensions)
         {
+            _initializing = false;
             _storeController = controller;
             _storeExtensionProvider = extensions;
 
+            _products.Clear();
             foreach (var product in _storeController.products.all)
             {
                 _products.Add(new UnityProduct(_localValidator, product));
@@ -70,67 +81,76 @@ namespace com.ktgame.iap.unity
 
         public void OnInitializeFailed(InitializationFailureReason error)
         {
+            _initializing = false;
             PurchaseInitialized?.Invoke(new PurchaseInitialize(InitializationStatus.NotReady));
             Debug.Log($"[{nameof(UnityPurchase)}] OnInitializeFailed FailureReason: {error}");
         }
 
         public void OnInitializeFailed(InitializationFailureReason error, string message)
         {
+            _initializing = false;
             PurchaseInitialized?.Invoke(new PurchaseInitialize(InitializationStatus.NotReady));
-            Debug.Log($"[{nameof(UnityPurchase)}] OnInitializeFailed FailureMessage: {message}");
+            Debug.Log($"[{nameof(UnityPurchase)}] OnInitializeFailed FailureReason: {error}, Message: {message}");
         }
 
         public void Purchase(string productId)
         {
             if (!IsInitialized)
             {
-                Debug.Log($"[{nameof(UnityPurchase)}] Purchase Not initialized.");
+                Debug.Log($"[{nameof(UnityPurchase)}] Purchase {productId}: not initialized.");
+                RaiseFailed(productId, PurchaseStatus.PurchasingUnavailable, "Store not initialized");
                 return;
             }
 
             var product = _storeController.products.WithID(productId);
-            if (product != null && product.availableToPurchase)
+            if (product == null || !product.availableToPurchase)
             {
-                Debug.Log($"[{nameof(UnityPurchase)}] Purchase {productId}: PROCESSING.");
-                PurchaseProcessing?.Invoke(new PurchaseProcess(product.definition.id));
-                _storeController.InitiatePurchase(product);
+                Debug.Log($"[{nameof(UnityPurchase)}] Purchase {productId}: product unavailable.");
+                RaiseFailed(productId, PurchaseStatus.ProductUnavailable, product == null ? "Unknown product" : "Product not available to purchase");
+                return;
             }
-            else
-            {
-                Debug.Log($"[{nameof(UnityPurchase)}] Purchase {productId}: FAILED.");
-            }
+
+            Debug.Log($"[{nameof(UnityPurchase)}] Purchase {productId}: PROCESSING.");
+            PurchaseProcessing?.Invoke(new PurchaseProcess(product.definition.id));
+            _storeController.InitiatePurchase(product);
         }
 
         public void RestorePurchases()
         {
             if (!IsInitialized)
             {
-                Debug.Log($"[{nameof(UnityPurchase)}] Purchase Not initialized.");
+                Debug.Log($"[{nameof(UnityPurchase)}] RestorePurchases: not initialized.");
+                RaiseRestoreCompleted(false, "Store not initialized");
                 return;
             }
 
-            if (Application.platform == RuntimePlatform.IPhonePlayer || Application.platform == RuntimePlatform.OSXPlayer)
+            switch (Application.platform)
             {
-                var apple = _storeExtensionProvider.GetExtension<IAppleExtensions>();
-                apple.RestoreTransactions((result, message) =>
-                {
-                    if (message != null)
-                    {
-                        Debug.Log($"[{nameof(UnityPurchase)}] RestorePurchases Failed. {message}");
-                    }
-                });
+                case RuntimePlatform.IPhonePlayer:
+                case RuntimePlatform.OSXPlayer:
+                    _storeExtensionProvider.GetExtension<IAppleExtensions>().RestoreTransactions(OnRestoreResult);
+                    break;
+                case RuntimePlatform.Android:
+                    _storeExtensionProvider.GetExtension<IGooglePlayStoreExtensions>().RestoreTransactions(OnRestoreResult);
+                    break;
+                default:
+                    Debug.Log($"[{nameof(UnityPurchase)}] RestorePurchases not supported on {Application.platform}.");
+                    RaiseRestoreCompleted(false, $"Not supported on {Application.platform}");
+                    break;
             }
-            else
-            {
-                Debug.Log($"[{nameof(UnityPurchase)}] RestorePurchases FAILED. Not supported on {Application.platform} platform.");
-            }
+        }
+
+        private void OnRestoreResult(bool success, string message)
+        {
+            Debug.Log($"[{nameof(UnityPurchase)}] RestorePurchases {(success ? "SUCCESS" : "FAILED")}. {message}");
+            RaiseRestoreCompleted(success, message);
         }
 
         public SubscriptionInfo GetSubscriptionInfo(string productId)
         {
             if (!IsInitialized)
             {
-                Debug.Log($"[{nameof(UnityPurchase)}] Purchase Not initialized.");
+                Debug.Log($"[{nameof(UnityPurchase)}] GetSubscriptionInfo: not initialized.");
                 return null;
             }
 
@@ -153,26 +173,31 @@ namespace com.ktgame.iap.unity
         public PurchaseProcessingResult ProcessPurchase(PurchaseEventArgs purchaseArgs)
         {
             var product = purchaseArgs.purchasedProduct;
+            var productId = product.definition.id;
 
-            Debug.Log($"[{nameof(UnityPurchase)}] Purchase {product.definition.id} Process with receipt {product.receipt}");
+            Debug.Log($"[{nameof(UnityPurchase)}] Purchase {productId} Process with receipt {product.receipt}");
 
             var purchaseState = PurchaseState.Purchased;
             if (_localValidator != null)
             {
-                purchaseState = _localValidator.Validate(product.definition.id, product.definition.type.ToString(), product.receipt);
+                purchaseState = _localValidator.Validate(productId, product.definition.type.ToString(), product.receipt);
             }
 
             if (purchaseState == PurchaseState.Purchased && _serverValidator != null)
             {
-                _serverValidator.Validate(product.definition.id, product.definition.type.ToString(), product.receipt);
+                _serverValidator.Validate(productId, product.definition.type.ToString(), product.receipt);
             }
 
-            Debug.Log($"[{nameof(UnityPurchase)}] Purchase {product.definition.id} Process with state {purchaseState}");
+            Debug.Log($"[{nameof(UnityPurchase)}] Purchase {productId} Process with state {purchaseState}");
 
             if (purchaseState == PurchaseState.Purchased)
             {
-                var purchase = new PurchaseComplete(product.definition.id, product.receipt);
+                var purchase = new PurchaseComplete(productId, product.receipt, product.transactionID, product.appleProductIsRestored);
                 PurchaseCompleted?.Invoke(purchase);
+            }
+            else
+            {
+                RaiseFailed(productId, PurchaseStatus.SignatureInvalid, $"Local validation returned {purchaseState}");
             }
 
             return PurchaseProcessingResult.Complete;
@@ -180,47 +205,62 @@ namespace com.ktgame.iap.unity
 
         public void OnPurchaseFailed(Product product, PurchaseFailureDescription failureDescription)
         {
-            Debug.Log($"[{nameof(UnityPurchase)}] OnPurchaseFailed {product.definition.id}: FAILED. PurchaseFailureReason: {failureDescription.message}");
-            OnPurchaseFailed(product, failureDescription.reason);
+            Debug.Log($"[{nameof(UnityPurchase)}] OnPurchaseFailed {product?.definition?.id}: {failureDescription.reason}. {failureDescription.message}");
+            RaiseFailed(product?.definition?.id, ToPurchaseStatus(failureDescription.reason), failureDescription.message);
         }
 
         public void OnPurchaseFailed(Product product, PurchaseFailureReason failureReason)
         {
-            Debug.Log($"[{nameof(UnityPurchase)}] OnPurchaseFailed {product.definition.id}: FAILED. PurchaseFailureReason: {failureReason}");
-            PurchaseStatus statusType;
+            Debug.Log($"[{nameof(UnityPurchase)}] OnPurchaseFailed {product?.definition?.id}: {failureReason}");
+            RaiseFailed(product?.definition?.id, ToPurchaseStatus(failureReason), null);
+        }
+
+        private static PurchaseStatus ToPurchaseStatus(PurchaseFailureReason failureReason)
+        {
             switch (failureReason)
             {
                 case PurchaseFailureReason.PurchasingUnavailable:
-                    statusType = PurchaseStatus.PurchasingUnavailable;
-                    break;
+                    return PurchaseStatus.PurchasingUnavailable;
                 case PurchaseFailureReason.ExistingPurchasePending:
-                    statusType = PurchaseStatus.ExistingPurchasePending;
-                    break;
+                    return PurchaseStatus.ExistingPurchasePending;
                 case PurchaseFailureReason.ProductUnavailable:
-                    statusType = PurchaseStatus.ProductUnavailable;
-                    break;
+                    return PurchaseStatus.ProductUnavailable;
                 case PurchaseFailureReason.SignatureInvalid:
-                    statusType = PurchaseStatus.SignatureInvalid;
-                    break;
+                    return PurchaseStatus.SignatureInvalid;
                 case PurchaseFailureReason.UserCancelled:
-                    statusType = PurchaseStatus.UserCancelled;
-                    break;
+                    return PurchaseStatus.UserCancelled;
                 case PurchaseFailureReason.PaymentDeclined:
-                    statusType = PurchaseStatus.PaymentDeclined;
-                    break;
+                    return PurchaseStatus.PaymentDeclined;
                 case PurchaseFailureReason.DuplicateTransaction:
-                    statusType = PurchaseStatus.DuplicateTransaction;
-                    break;
-                case PurchaseFailureReason.Unknown:
-                    statusType = PurchaseStatus.Unknown;
-                    break;
-                default:
-                    statusType = PurchaseStatus.Unknown;
-                    break;
+                    return PurchaseStatus.DuplicateTransaction;
             }
 
-            var status = new PurchaseError(product.definition.id, statusType);
-            PurchaseFailed?.Invoke(status);
+            // Các giá trị chỉ có ở Unity IAP 5 so sánh theo tên để vẫn compile được với Unity IAP 4.
+            switch (failureReason.ToString())
+            {
+                case "ValidationFailure":
+                    return PurchaseStatus.ReceiptValidationFailed;
+                case "StoreNotConnected":
+                    return PurchaseStatus.PurchasingUnavailable;
+                case "UserNotAuthenticated":
+                    return PurchaseStatus.Unauthorized;
+                case "NotSupported":
+                    return PurchaseStatus.UnsupportedStore;
+                case "OrderCancelled":
+                    return PurchaseStatus.UserCancelled;
+                default:
+                    return PurchaseStatus.Unknown;
+            }
+        }
+
+        private void RaiseFailed(string productId, PurchaseStatus status, string message)
+        {
+            PurchaseFailed?.Invoke(new PurchaseError(productId, status, message));
+        }
+
+        private void RaiseRestoreCompleted(bool success, string message)
+        {
+            RestoreCompleted?.Invoke(new PurchaseRestore(success, message));
         }
     }
 }
