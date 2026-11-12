@@ -1,3 +1,10 @@
+## [1.0.4](https://github.com/KhanhTQ-Organization/com.ktgame.iap.unity/compare/v1.0.3...v1.0.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* update package ([b233e8e](https://github.com/KhanhTQ-Organization/com.ktgame.iap.unity/commit/b233e8eae7f01b4258b64805c051cc0ec51e5554))
+
 ## [1.0.3](https://github.com/KhanhTQ-Organization/com.ktgame.iap.unity/compare/v1.0.2...v1.0.3) (2026-08-20)
 
 
